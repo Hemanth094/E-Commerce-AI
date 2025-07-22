@@ -21,7 +21,6 @@ DATABASE = "ecommerce.db"
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Remove the /ask_web endpoint and related HTML code.
 
 # Print available Gemini models at startup for debugging
 print("Available Gemini models:")
@@ -219,7 +218,13 @@ async def home():
                 let summaryHtml = data.summary ? `<div style='background:#eaf1fb;border-radius:8px;padding:14px 16px;margin-bottom:12px;font-size:1.15em;font-weight:500;color:#2355e6;text-align:center;'>${data.summary}</div>` : '';
                 // Show ONLY the answer field under Answer if present, else show 'No answer available.'
                 let answerHtml = data.answer ? `<pre>${data.answer}</pre>` : `<pre>No answer available.</pre>`;
-                let html = `${summaryHtml}<h3>SQL:</h3><pre>${data.sql}</pre><h3>Answer:</h3>${answerHtml}`;
+                // If the SQL result is a time series/grouped query, show a table below the chart if available
+                let tableHtml = '';
+                if (data.table && Array.isArray(data.table) && data.table.length > 0) {
+                  const cols = Object.keys(data.table[0]);
+                  tableHtml = `<div style='overflow-x:auto;margin-top:12px;'><table style='border-collapse:collapse;width:100%;background:#fff;box-shadow:0 2px 8px #4f8cff11;'><thead><tr>${cols.map(col => `<th style='padding:6px 10px;border-bottom:1.5px solid #eaf1fb;text-align:left;'>${col}</th>`).join('')}</tr></thead><tbody>${data.table.map(row => `<tr>${cols.map(col => `<td style='padding:6px 10px;border-bottom:1px solid #f4f6fb;'>${row[col]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+                }
+                let html = `${summaryHtml}<h3>SQL:</h3><pre>${data.sql}</pre><h3>Answer:</h3>${answerHtml}${tableHtml}`;
                 document.getElementById('result').innerHTML = html;
             } catch (err) {
                 document.getElementById('progress').innerHTML = '';
@@ -332,6 +337,19 @@ async def ask_question(q: QuestionInput):
             avg_cpc = f"${avg_cpc}"
         summary = f"The product with the highest average CPC is Item ID {item_id} with an average CPC of {avg_cpc}."
         return {"question": q.question, "sql": sql, "answer": summary}
+    # Backend override for ad sales over time
+    if "ad sales over time" in lower_q or ("ad sales" in lower_q and "over time" in lower_q):
+        sql = (
+            "SELECT date, SUM(ad_sales) AS total_ad_sales "
+            "FROM AdSales "
+            "GROUP BY date "
+            "ORDER BY date;"
+        )
+        print("[DEBUG] Using backend override SQL for ad sales over time:", sql)
+        result_df = run_query(sql)
+        summary = "Ad sales over time by date."
+        table = result_df.to_dict(orient="records")
+        return {"question": q.question, "sql": sql, "answer": summary, "table": table}
     # Default: use LLM
     sql = question_to_sql(q.question)
     print(f"[DEBUG] SQL generated: {sql}")
